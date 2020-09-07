@@ -36,11 +36,14 @@ CICD_HSS_PUBLIC_ADDR='192.168.61.194'
 CICD_MME_PUBLIC_ADDR='192.168.61.195'
 CICD_SPGWC_PUBLIC_ADDR='192.168.61.196'
 CICD_SPGWU_PUBLIC_ADDR='192.168.61.197'
+CICD_REDIS_PUBLIC_ADDR='192.168.61.198'
 
 class deployForDsTester():
     def __init__(self):
         self.action = 'None'
+        self.mmeVersion = 'oai-'
         self.tag = ''
+        self.magmaPath = ''
 
     def createNetworks(self):
         # first check if already up?
@@ -94,6 +97,14 @@ class deployForDsTester():
                 time.sleep(2)
                 pass
 
+    def deployRedis(self):
+        self.magmaPath = '/home/oaici/raphael/magma'
+        subprocess_run_w_echo('sed -e "s@bind 127.0.0.1@bind ' + CICD_REDIS_PUBLIC_ADDR + '@" ' + self.magmaPath + '/lte/gateway/docker/mme/configs/redis_for_container.conf > ' + self.magmaPath + '/lte/gateway/docker/mme/configs/redis_extern.conf')
+        subprocess_run_w_echo('docker run -v ' + self.magmaPath + '/lte/gateway/docker/mme/configs/redis_extern.conf:/usr/local/etc/redis/redis.conf --name cicd-redis --network cicd-oai-public-net --ip 192.168.61.198 -d --entrypoint "/bin/bash" redis:6.0.5 -c "sleep infinity"')
+        time.sleep(1)
+        subprocess_run_w_echo('docker exec -it cicd-redis /bin/bash -c "mkdir /var/opt/magma"')
+        subprocess_run_w_echo('docker exec -it cicd-redis /bin/bash -c "redis-server /usr/local/etc/redis/redis.conf" | tee archives/redis_start.log')
+
     def deployHSS(self):
         res = ''
         # first check if tag exists
@@ -122,20 +133,29 @@ class deployForDsTester():
         res = ''
         # first check if tag exists
         try:
-            res = subprocess.check_output('docker image inspect oai-mme:' + self.tag, shell=True, universal_newlines=True)
+            res = subprocess.check_output('docker image inspect ' + self.mmeVersion + 'mme:' + self.tag, shell=True, universal_newlines=True)
         except:
             sys.exit(-1)
 
         # check if there is an entrypoint
         entrypoint = re.search('entrypoint', str(res))
         if entrypoint is not None:
-            subprocess_run_w_echo('docker run --privileged --name cicd-oai-mme --network cicd-oai-public-net --ip ' + CICD_MME_PUBLIC_ADDR + ' -d --entrypoint "/bin/bash" oai-mme:' + self.tag + ' -c "sleep infinity"')
+            subprocess_run_w_echo('docker run --privileged --name cicd-oai-mme --network cicd-oai-public-net --ip ' + CICD_MME_PUBLIC_ADDR + ' -d --entrypoint "/bin/bash" ' + self.mmeVersion + 'mme:' + self.tag + ' -c "sleep infinity"')
         else:
-            subprocess_run_w_echo('docker run --privileged --name cicd-oai-mme --network cicd-oai-public-net --ip ' + CICD_MME_PUBLIC_ADDR + ' -d oai-mme:' + self.tag + ' /bin/bash -c "sleep infinity"')
-        subprocess_run_w_echo('python3 ./ci-scripts/generate_mme_config_script.py --kind=MME --hss_s6a=' + CICD_HSS_PUBLIC_ADDR + ' --mme_s6a=' + CICD_MME_PUBLIC_ADDR + ' --mme_s1c_IP=' + CICD_MME_PUBLIC_ADDR + ' --mme_s1c_name=eth0 --mme_s10_IP=' + CICD_MME_PUBLIC_ADDR + ' --mme_s10_name=eth0 --mme_s11_IP=' + CICD_MME_PUBLIC_ADDR + ' --mme_s11_name=eth0 --spgwc0_s11_IP=' + CICD_SPGWC_PUBLIC_ADDR + ' --mme_gid=455 --mme_code=5 --mcc=320 --mnc=230 --tai_list="5556 506 301,5556 505 300,1235 203 101,1235 202 100,5557 506 301,5557 505 300,1236 203 101,1236 202 100" --realm=openairinterface.org --prefix=/openair-mme/etc --from_docker_file')
-        subprocess_run_w_echo('docker cp ./mme-cfg.sh cicd-oai-mme:/openair-mme/scripts')
-        subprocess_run_w_echo('docker exec -it cicd-oai-mme /bin/bash -c "cd /openair-mme/scripts && chmod 777 mme-cfg.sh && ./mme-cfg.sh" > archives/mme_config.log')
-        subprocess_run_w_echo('docker cp mme.conf cicd-oai-mme:/openair-mme/etc')
+            subprocess_run_w_echo('docker run --privileged --name cicd-oai-mme --network cicd-oai-public-net --ip ' + CICD_MME_PUBLIC_ADDR + ' -d ' + self.mmeVersion + 'mme:' + self.tag + ' /bin/bash -c "sleep infinity"')
+        if self.mmeVersion == 'oai-':
+            subprocess_run_w_echo('python3 ./ci-scripts/generate_mme_config_script.py --kind=MME --hss_s6a=' + CICD_HSS_PUBLIC_ADDR + ' --mme_s6a=' + CICD_MME_PUBLIC_ADDR + ' --mme_s1c_IP=' + CICD_MME_PUBLIC_ADDR + ' --mme_s1c_name=eth0 --mme_s10_IP=' + CICD_MME_PUBLIC_ADDR + ' --mme_s10_name=eth0 --mme_s11_IP=' + CICD_MME_PUBLIC_ADDR + ' --mme_s11_name=eth0 --spgwc0_s11_IP=' + CICD_SPGWC_PUBLIC_ADDR + ' --mme_gid=455 --mme_code=5 --mcc=320 --mnc=230 --tai_list="5556 506 301,5556 505 300,1235 203 101,1235 202 100,5557 506 301,5557 505 300,1236 203 101,1236 202 100" --realm=openairinterface.org --prefix=/openair-mme/etc --from_docker_file')
+            subprocess_run_w_echo('docker cp ./mme-cfg.sh cicd-oai-mme:/openair-mme/scripts')
+            subprocess_run_w_echo('docker exec -it cicd-oai-mme /bin/bash -c "cd /openair-mme/scripts && chmod 777 mme-cfg.sh && ./mme-cfg.sh" > archives/mme_config.log')
+            subprocess_run_w_echo('docker cp mme.conf cicd-oai-mme:/openair-mme/etc')
+        elif self.mmeVersion == 'magma-':
+            subprocess_run_w_echo('python3 ./ci-scripts/generate_mme_config_script.py --kind=MME --hss_s6a=' + CICD_HSS_PUBLIC_ADDR + ' --mme_s6a=' + CICD_MME_PUBLIC_ADDR + ' --mme_s1c_IP=' + CICD_MME_PUBLIC_ADDR + ' --mme_s1c_name=eth0 --mme_s10_IP=' + CICD_MME_PUBLIC_ADDR + ' --mme_s10_name=eth0 --mme_s11_IP=' + CICD_MME_PUBLIC_ADDR + ' --mme_s11_name=eth0 --spgwc0_s11_IP=' + CICD_SPGWC_PUBLIC_ADDR + ' --mme_gid=455 --mme_code=5 --mcc=320 --mnc=230 --tai_list="5556 506 301,5556 505 300,1235 203 101,1235 202 100,5557 506 301,5557 505 300,1236 203 101,1236 202 100" --realm=openairinterface.org --prefix=/conv-mme/etc --from_docker_file --magma --redis_IP=' + CICD_REDIS_PUBLIC_ADDR)
+            subprocess_run_w_echo('docker cp component/oai-mme/etc/mme_fd.sprint.conf cicd-oai-mme:/conv-mme/etc/mme_fd.conf')
+            subprocess_run_w_echo('docker cp ./mme-cfg.sh cicd-oai-mme:/conv-mme/scripts')
+            subprocess_run_w_echo('docker exec -it cicd-oai-mme /bin/bash -c "cd /conv-mme/scripts && chmod 777 mme-cfg.sh && ./mme-cfg.sh" > archives/mme_config.log')
+            subprocess_run_w_echo('docker cp mme.conf cicd-oai-mme:/conv-mme/etc')
+            subprocess_run_w_echo('docker exec -it cicd-oai-mme /bin/bash -c "ln -s /conv-mme /openair-mme"')
+            subprocess_run_w_echo('docker exec -d cicd-oai-mme /bin/bash -c "nohup ./bin/sctpd 2> /conv-mme/sctpd.log"')
 
     def deploySPGWC(self):
         res = ''
@@ -176,7 +196,7 @@ class deployForDsTester():
 
     def removeAllContainers(self):
         try:
-            subprocess_run_w_echo('docker rm -f cicd-cassandra cicd-oai-hss cicd-oai-mme cicd-oai-spgwc cicd-oai-spgwu-tiny')
+            subprocess_run_w_echo('docker rm -f cicd-cassandra cicd-oai-hss cicd-oai-mme cicd-oai-spgwc cicd-oai-spgwu-tiny cicd-redis')
         except:
             pass
 
@@ -195,12 +215,15 @@ def Usage():
     print('  --action={CreateNetworks,RemoveNetworks,...}')
     print('-------------------------------------------------------------------------------------------------------- Options -----')
     print('  --tag=[Image Tag in registry]')
+    print('  --mmeVersion=[Version to Use] (default is for the moment "oai-", can be also "magma-"')
+    print('  --magmaPath=[Path to the Magma repository workspace]')
     print('------------------------------------------------------------------------------------------------- Actions Syntax -----')
     print('python3 dsTestDeployTools.py --action=CreateNetworks')
     print('python3 dsTestDeployTools.py --action=RemoveNetworks')
     print('python3 dsTestDeployTools.py --action=DeployCassandra')
+    print('python3 dsTestDeployTools.py --action=DeployRedis --magmaPath=[path]')
     print('python3 dsTestDeployTools.py --action=DeployHSS --tag=[tag]')
-    print('python3 dsTestDeployTools.py --action=DeployMME --tag=[tag]')
+    print('python3 dsTestDeployTools.py --action=DeployMME --tag=[tag] --mmeVersion=[version]')
     print('python3 dsTestDeployTools.py --action=DeploySPGWC --tag=[tag]')
     print('python3 dsTestDeployTools.py --action=DeploySPGWU --tag=[tag]')
     print('python3 dsTestDeployTools.py --action=RemoveAllContainers')
@@ -227,6 +250,7 @@ while len(argvs) > 1:
         if action != 'CreateNetworks' and \
            action != 'RemoveNetworks' and \
            action != 'DeployCassandra' and \
+           action != 'DeployRedis' and \
            action != 'DeployHSS' and \
            action != 'DeployMME' and \
            action != 'DeploySPGWC' and \
@@ -239,6 +263,17 @@ while len(argvs) > 1:
     elif re.match('^\-\-tag=(.+)$', myArgv, re.IGNORECASE):
         matchReg = re.match('^\-\-tag=(.+)$', myArgv, re.IGNORECASE)
         DFDT.tag = matchReg.group(1)
+    elif re.match('^\-\-mmeVersion=(.+)$', myArgv, re.IGNORECASE):
+        matchReg = re.match('^\-\-mmeVersion=(.+)$', myArgv, re.IGNORECASE)
+        version = matchReg.group(1)
+        if version != 'oai-' and version != 'magma-':
+            print('Unsupported Version -> ' + version)
+            Usage()
+            sys.exit(-1)
+        DFDT.mmeVersion = version
+    elif re.match('^\-\-magmaPath=(.+)$', myArgv, re.IGNORECASE):
+        matchReg = re.match('^\-\-magmaPath=(.+)$', myArgv, re.IGNORECASE)
+        DFDT.magmaPath = matchReg.group(1)
 
 if DFDT.action == 'CreateNetworks':
     DFDT.createNetworks()
@@ -246,6 +281,12 @@ elif DFDT.action == 'RemoveNetworks':
     DFDT.removeNetworks()
 elif DFDT.action == 'DeployCassandra':
     DFDT.deployCassandra()
+elif DFDT.action == 'DeployRedis':
+    if DFDT.magmaPath == '':
+        print('Missing path to Magma workspace')
+        Usage()
+        sys.exit(-1)
+    DFDT.deployRedis()
 elif DFDT.action == 'DeployHSS':
     if DFDT.tag == '':
         print('Missing OAI-HSS image tag')
